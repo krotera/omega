@@ -16,14 +16,18 @@ import { SettingOutlined } from "@ant-design/icons";
 import { NumericInput } from "./numericInput";
 import { Settings } from "./settings";
 import { AppBar } from "./appBar";
-import { CurrencyPairProvider } from "../utils/currencyPair";
+import { CurrencyPairProvider, useCurrencyPairState } from "../utils/currencyPair";
 import { SwapView } from "./swap";
 import contract_keys from "../contract_keys.json";
 import { markets } from "../markets";
-import { useConnection } from '../utils/connection';
+import { PoolConfig } from "../models";
+import { DEFAULT_DENOMINATOR } from "./pool/config";
+import { useConnection, useSlippageConfig } from '../utils/connection';
 import { useWallet } from '../utils/wallet';
 import { useMint } from '../utils/accounts';
 import { sendTransaction } from "../utils/utils";
+import { addLiquidity, usePoolForBasket } from "../utils/pools";
+import { notify } from "../utils/notifications";
 
 const PROGRAM_ID = new PublicKey(contract_keys.omega_program_id);
 
@@ -61,6 +65,62 @@ const OMEGA_CONTRACT_LAYOUT = BufferLayout.struct([
   BufferLayout.blob(DETAILS_BUFFER_LEN, 'details')
 ]);
 
+const { wallet, connected } = useWallet();
+const connection = useConnection();
+const [pendingTx, setPendingTx] = useState(false);
+const {
+  A,
+  B,
+  setLastTypedAccount,
+  setPoolOperation,
+} = useCurrencyPairState();
+const pool = usePoolForBasket([A?.mintAddress, B?.mintAddress]);
+const { slippage } = useSlippageConfig();
+const [options, setOptions] = useState<PoolConfig>({
+  curveType: 0,
+  tradeFeeNumerator: 25,
+  tradeFeeDenominator: DEFAULT_DENOMINATOR,
+  ownerTradeFeeNumerator: 5,
+  ownerTradeFeeDenominator: DEFAULT_DENOMINATOR,
+  ownerWithdrawFeeNumerator: 0,
+  ownerWithdrawFeeDenominator: DEFAULT_DENOMINATOR,
+});
+
+const tokensAndUSDCToPool = !connected
+    ? wallet.connect
+    : async () => {
+        if (A.account && B.account && A.mint && B.mint) {
+          setPendingTx(true);
+          const components = [
+            {
+              account: A.account,
+              mintAddress: A.mintAddress,
+              amount: A.convertAmount(),
+            },
+            {
+              account: B.account,
+              mintAddress: B.mintAddress,
+              amount: B.convertAmount(),
+            },
+          ];
+
+          addLiquidity(connection, wallet, components, slippage, pool, options)
+            .then(() => {
+              setPendingTx(false);
+            })
+            .catch((e) => {
+              console.log("Transaction failed", e);
+              notify({
+                description:
+                  "Please try again and approve transactions from your wallet",
+                message: "Adding liquidity cancelled.",
+                type: "error",
+              });
+              setPendingTx(false);
+            });
+        }
+      };
+
 export const ExchangeView = (props: {}) => {
 
   const colStyle: React.CSSProperties = { padding: "1em" };
@@ -72,8 +132,6 @@ export const ExchangeView = (props: {}) => {
   // so it's JavaScript-forced-into-TypeScript.
   // One side effect of this is the gnarly function parameter type annotations
   // (in JS, they can be unannotated, while TS complains with error "ts(7006)").
-  let connection = useConnection();
-  const { wallet, connected } = useWallet();
   const quoteMint = useMint(contract_keys.quote_mint_pk);
   const [contractData, setContractData] = useState({
     exp_time: 1612137600, // 02/01/2021 00:00 UTC
@@ -88,6 +146,9 @@ export const ExchangeView = (props: {}) => {
     BufferLayout.u32('instruction'),
     BufferLayout.nu64('quantity'),
   ]);
+
+  const [issueMarket, setIssueMarket] = useState(markets[0]);
+  const [issueAmount, setIssueAmount] = useState("");
 
   function encodeInstructionData(layout: { encode: (arg0: any, arg1: Buffer) => any; }, args: { instruction: number; quantity: any; }) {
     let data = Buffer.alloc(1024);
@@ -210,45 +271,56 @@ export const ExchangeView = (props: {}) => {
     let outcomePks = [];
     let outcomeInfos = market["outcomes"];
 
-    if (outcomeInfos) { // null check to handle JS-to-TS error "ts(2532)"
-      let numOutcomes = outcomeInfos.length;
-      for (let i = 0; i < numOutcomes; i++) {
-        let outcomeMint = new PublicKey(outcomeInfos[i]["mint_pk"]);
-        outcomePks.push(outcomeMint);
-        let userOutcomeWallet = await userTokenAccount(accounts, outcomeMint);
-        outcomePks.push(userOutcomeWallet);
-        console.log(outcomeInfos[i]["name"], outcomeMint, userOutcomeWallet);
-      }
-      let issueSetInstruction = IssueSetInstruction(
-        new PublicKey(market.omega_contract_pk),
-        wallet.publicKey,
-        userQuote,
-        new PublicKey(market.quote_vault_pk),
-        new PublicKey(market.signer_pk),
-        outcomePks,
-        amount);
-      let transaction = new Transaction();
-      transaction.add(issueSetInstruction);
-
-      let txid = await sendTransaction({
-        transaction,
-        wallet,
-        signers: [],
-        connection,
-        sendingMessage: 'sending IssueSetInstruction...',
-        sentMessage: 'IssueSetInstruction sent',
-        successMessage: 'IssueSetInstruction success'
-      });
-      console.log('success txid:', txid);
-    }
-    else {
+    if (!outcomeInfos) { // null check to handle JS-to-TS error "ts(2532)"
       console.error("FATAL ERROR: outcomeInfos was null!");
       return null;
     }
+
+    let numOutcomes = outcomeInfos.length;
+    for (let i = 0; i < numOutcomes; i++) {
+      let outcomeMint = new PublicKey(outcomeInfos[i]["mint_pk"]);
+      outcomePks.push(outcomeMint);
+      let userOutcomeWallet = await userTokenAccount(accounts, outcomeMint);
+      outcomePks.push(userOutcomeWallet);
+      console.log(outcomeInfos[i]["name"], outcomeMint, userOutcomeWallet);
+    }
+    let issueSetInstruction = IssueSetInstruction(
+      new PublicKey(market.omega_contract_pk),
+      wallet.publicKey,
+      userQuote,
+      new PublicKey(market.quote_vault_pk),
+      new PublicKey(market.signer_pk),
+      outcomePks,
+      amount);
+    let transaction = new Transaction();
+    transaction.add(issueSetInstruction);
+
+    let txid = await sendTransaction({
+      transaction,
+      wallet,
+      signers: [],
+      connection,
+      sendingMessage: 'sending IssueSetInstruction...',
+      sentMessage: 'IssueSetInstruction sent',
+      successMessage: 'IssueSetInstruction success'
+    });
+    console.log('success txid:', txid);
   }
 
-  const [issueMarket, setIssueMarket] = useState(markets[0]);
-  const [issueAmount, setIssueAmount] = useState("");
+  // Provide liquidity to the pool, doing the following:
+  //     1. Convert `x` USDC into `x` of each type of token
+  //     2. Fund the pool with all `x` of each token and `x * price` USDC given
+  //        the `price` of that type of token
+  async function provideLiquidity(
+    market: { [x: string]: any; contract_name?: string; details?: string; omega_contract_pk: any; omega_program_id?: string; oracle_pk?: string; outcomes?: { icon: string; mint_pk: string; name: string; }[]; quote_mint_pk?: string; quote_vault_pk: any; signer_nonce?: number; signer_pk: any; }, 
+    amount: number | null
+  ) {
+    await issueSet(market, amount); // step 1
+
+    // inbetween here, configure A and B...
+
+    await tokensAndUSDCToPool(); // step 2
+  }
 
   return (
     <>
@@ -288,7 +360,7 @@ export const ExchangeView = (props: {}) => {
             <Button
               className="trade-button"
               type="primary"
-              onClick={connected ? () => issueSet(issueMarket, parseAmount(issueAmount)) : wallet.connect}
+              onClick={connected ? () => provideLiquidity(issueMarket, parseAmount(issueAmount)) : wallet.connect}
               style={{ width: "100%" }}
             >
               { connected ? "Issue Tokens" : "Connect Wallet" }
