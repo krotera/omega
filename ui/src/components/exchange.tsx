@@ -32,95 +32,71 @@ import { notify } from "../utils/notifications";
 export const ExchangeView = (props: {}) => {
   const PROGRAM_ID = new PublicKey(contract_keys.omega_program_id);
 
-console.log('PROGRAM_ID', PROGRAM_ID.toString());
+  console.log('PROGRAM_ID', PROGRAM_ID.toString());
 
-const QUOTE_CURRENCY = "USDC";
-const QUOTE_CURRENCY_MINT = new PublicKey(contract_keys.quote_mint_pk);
+  const QUOTE_CURRENCY = "USDC";
+  const QUOTE_CURRENCY_MINT = new PublicKey(contract_keys.quote_mint_pk);
 
-console.log('QUOTE_CURRENCY', QUOTE_CURRENCY, QUOTE_CURRENCY_MINT.toString());
+  console.log('QUOTE_CURRENCY', QUOTE_CURRENCY, QUOTE_CURRENCY_MINT.toString());
 
-markets.forEach(m => {
-  console.log('MARKET', m.contract_name);
-});
+  markets.forEach(m => {
+    console.log('MARKET', m.contract_name);
+  });
 
-/* INSTRUCTIONS
- * define buffer layouts and factory functions
- */
+  const { wallet, connected } = useWallet();
+  const connection = useConnection();
+  const [pendingTx, setPendingTx] = useState(false);
+  const {
+    A,
+    B,
+    setLastTypedAccount,
+    setPoolOperation,
+  } = useCurrencyPairState();
+  const pool = usePoolForBasket([A?.mintAddress, B?.mintAddress]);
+  const { slippage } = useSlippageConfig();
+  const [options, setOptions] = useState<PoolConfig>({
+    curveType: 0,
+    tradeFeeNumerator: 25,
+    tradeFeeDenominator: DEFAULT_DENOMINATOR,
+    ownerTradeFeeNumerator: 5,
+    ownerTradeFeeDenominator: DEFAULT_DENOMINATOR,
+    ownerWithdrawFeeNumerator: 0,
+    ownerWithdrawFeeDenominator: DEFAULT_DENOMINATOR,
+  });
+  const tokensAndUSDCToPool = !connected
+      ? wallet.connect
+      : async () => {
+          if (A.account && B.account && A.mint && B.mint) {
+            setPendingTx(true);
+            const components = [
+              {
+                account: A.account,
+                mintAddress: A.mintAddress,
+                amount: A.convertAmount(),
+              },
+              {
+                account: B.account,
+                mintAddress: B.mintAddress,
+                amount: B.convertAmount(),
+              },
+            ];
 
-const MAX_OUTCOMES = 8;
-const DETAILS_BUFFER_LEN = 2048;
-
-// TODO fix this layout to be more fully specified
-const OMEGA_CONTRACT_LAYOUT = BufferLayout.struct([
-  BufferLayout.nu64('flags'),
-  BufferLayout.blob(32, 'oracle'),
-  BufferLayout.blob(32, 'quote_mint'),
-  BufferLayout.nu64('exp_time'),
-  BufferLayout.nu64('auto_exp_time'),
-  BufferLayout.blob(32, 'vault'),
-  BufferLayout.blob(32, 'signer_key'),
-  BufferLayout.nu64('signer_nonce'),
-  BufferLayout.blob(32, 'winner'),
-  BufferLayout.seq(BufferLayout.blob(32), MAX_OUTCOMES, 'outcomes'),
-  BufferLayout.nu64('num_outcomes'),
-  BufferLayout.blob(DETAILS_BUFFER_LEN, 'details')
-]);
-
-const { wallet, connected } = useWallet();
-const connection = useConnection();
-const [pendingTx, setPendingTx] = useState(false);
-const {
-  A,
-  B,
-  setLastTypedAccount,
-  setPoolOperation,
-} = useCurrencyPairState();
-const pool = usePoolForBasket([A?.mintAddress, B?.mintAddress]);
-const { slippage } = useSlippageConfig();
-const [options, setOptions] = useState<PoolConfig>({
-  curveType: 0,
-  tradeFeeNumerator: 25,
-  tradeFeeDenominator: DEFAULT_DENOMINATOR,
-  ownerTradeFeeNumerator: 5,
-  ownerTradeFeeDenominator: DEFAULT_DENOMINATOR,
-  ownerWithdrawFeeNumerator: 0,
-  ownerWithdrawFeeDenominator: DEFAULT_DENOMINATOR,
-});
-
-const tokensAndUSDCToPool = !connected
-    ? wallet.connect
-    : async () => {
-        if (A.account && B.account && A.mint && B.mint) {
-          setPendingTx(true);
-          const components = [
-            {
-              account: A.account,
-              mintAddress: A.mintAddress,
-              amount: A.convertAmount(),
-            },
-            {
-              account: B.account,
-              mintAddress: B.mintAddress,
-              amount: B.convertAmount(),
-            },
-          ];
-
-          addLiquidity(connection, wallet, components, slippage, pool, options)
-            .then(() => {
-              setPendingTx(false);
-            })
-            .catch((e) => {
-              console.log("Transaction failed", e);
-              notify({
-                description:
-                  "Please try again and approve transactions from your wallet",
-                message: "Adding liquidity cancelled.",
-                type: "error",
+            addLiquidity(connection, wallet, components, slippage, pool, options)
+              .then(() => {
+                setPendingTx(false);
+              })
+              .catch((e) => {
+                console.log("Transaction failed", e);
+                notify({
+                  description:
+                    "Please try again and approve transactions from your wallet",
+                  message: "Adding liquidity cancelled.",
+                  type: "error",
+                });
+                setPendingTx(false);
               });
-              setPendingTx(false);
-            });
-        }
-      };
+          }
+        };
   const colStyle: React.CSSProperties = { padding: "1em" };
 
   // Stuff for the Provide Liquidity card
