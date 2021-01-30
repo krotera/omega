@@ -29,7 +29,8 @@ import { sendTransaction } from "../utils/utils";
 import { addLiquidity, usePoolForBasket } from "../utils/pools";
 import { notify } from "../utils/notifications";
 
-const PROGRAM_ID = new PublicKey(contract_keys.omega_program_id);
+export const ExchangeView = (props: {}) => {
+  const PROGRAM_ID = new PublicKey(contract_keys.omega_program_id);
 
 console.log('PROGRAM_ID', PROGRAM_ID.toString());
 
@@ -120,9 +121,6 @@ const tokensAndUSDCToPool = !connected
             });
         }
       };
-
-export const ExchangeView = (props: {}) => {
-
   const colStyle: React.CSSProperties = { padding: "1em" };
 
   // Stuff for the Provide Liquidity card
@@ -342,51 +340,54 @@ export const ExchangeView = (props: {}) => {
         }
       />
 
-      {/* Provide Liquidity card */}
-      <Row justify="center">
-        <div style={colStyle}>
-          <Card>
-            <h2>Provide Liquidity</h2>
-            <p>Swap USDC for equal quantities of {issueMarket.contract_name} tokens that are automatically added to the pool.</p>
-            <NumericInput
-              value={issueAmount}
-              onChange={setIssueAmount}
-              style={{
-                "margin-bottom": 10,
-              }}
-              addonAfter="USDC"
-              placeholder="0.00"
-            />
-            <Button
-              className="trade-button"
-              type="primary"
-              onClick={connected ? () => provideLiquidity(issueMarket, parseAmount(issueAmount)) : wallet.connect}
-              style={{ width: "100%" }}
-            >
-              { connected ? "Issue Tokens" : "Connect Wallet" }
-
-            </Button>
-            <br/><br/>
-            <Popover
-              trigger="hover"
-              content={
-                <div style={{ width: 300 }}>
-                  Liquidity providers earn a fixed percentage fee on all trades
-                  proportional to their share of the pool. Fees are added to the
-                  pool, accrue in real time and can be claimed by withdrawing your
-                  liquidity.
-                </div>
-              }
-            >
-              <Button type="text">Read more about providing liquidity.</Button>
-            </Popover>
-          </Card>
-        </div>
-      </Row>
-
-      {/* Trade / Pool elements */}
       { markets.map((market: any) =>
         <>
+          {/* Provide Liquidity card */}
+          <Row justify="center">
+            <div style={colStyle}>
+                <CurrencyPairProvider baseMintAddress={market.quote_mint_pk}
+                                      quoteMintAddress={market.outcomes[0].mint_pk} >
+                <Card>
+                  <h2>Provide Liquidity</h2>
+                  <p>Swap USDC for equal quantities of {issueMarket.contract_name} tokens that are automatically added to the pool.</p>
+                  <NumericInput
+                    value={issueAmount}
+                    onChange={setIssueAmount}
+                    style={{
+                      "margin-bottom": 10,
+                    }}
+                    addonAfter="USDC"
+                    placeholder="0.00"
+                  />
+                  <Button
+                    className="trade-button"
+                    type="primary"
+                    onClick={connected ? () => provideLiquidity(issueMarket, parseAmount(issueAmount)) : wallet.connect}
+                    style={{ width: "100%" }}
+                  >
+                    { connected ? "Issue Tokens" : "Connect Wallet" }
+
+                  </Button>
+                  <br/><br/>
+                  <Popover
+                    trigger="hover"
+                    content={
+                      <div style={{ width: 300 }}>
+                        Liquidity providers earn a fixed percentage fee on all trades
+                        proportional to their share of the pool. Fees are added to the
+                        pool, accrue in real time and can be claimed by withdrawing your
+                        liquidity.
+                      </div>
+                    }
+                  >
+                    <Button type="text">Read more about providing liquidity.</Button>
+                  </Popover>
+                </Card>
+              </CurrencyPairProvider>
+            </div>
+          </Row>
+
+          {/* Trade / Pool elements */}
           <Row justify="center">
           <Col flex={2}>
             <div style={colStyle}>
